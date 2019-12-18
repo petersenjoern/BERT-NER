@@ -1,0 +1,8 @@
+pytorch-pretrained-bert==0.4.0
+pandas
+numpy
+keras
+tensorflow-gpu
+sklearn
+tqdm
+seqeval

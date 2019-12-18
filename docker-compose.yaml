@@ -1,0 +1,12 @@
+version: '3.6'
+services: 
+  torch:
+    build:
+      context: .
+      dockerfile: ./torch/Dockerfile
+    volumes: 
+      - ./torch:/workspace/torch
+      - ./data:/workspace/data
+    # entrypoint: ["bash", "./torch/entrypoint-torch.sh"]
+    tty: true
+
