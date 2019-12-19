@@ -16,7 +16,8 @@ from seqeval.metrics import f1_score
 
 
 # load data and fill na
-data = pd.read_csv("/workspace/data/ner_dataset.csv", encoding="latin1")
+data_path = pathlib.Path.cwd().joinpath('data', 'ner_dataset.csv')
+data = pd.read_csv(data_path, encoding="latin1")
 data = data.fillna(method="ffill")
 
 # get unique words from the "Word" column
@@ -62,8 +63,8 @@ MAX_LEN = 75
 bs = 32
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# n_gpu = torch.cuda.device_count()
-# print(torch.cuda.get_device_name(0))
+n_gpu = torch.cuda.device_count()
+print(torch.cuda.get_device_name(0))
 
 # Load pre-trained model tokenizer (vocabulary)
 tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', do_lower_case=True)
@@ -99,12 +100,13 @@ tr_masks, val_masks, _, _ = train_test_split(attention_masks, input_ids,
 
 # Since we’re operating in pytorch, we have to 
 # convert the dataset to torch tensors.
-tr_inputs = torch.tensor(tr_inputs)
-val_inputs = torch.tensor(val_inputs)
-tr_tags = torch.tensor(tr_tags)
-val_tags = torch.tensor(val_tags)
-tr_masks = torch.tensor(tr_masks)
-val_masks = torch.tensor(val_masks)
+tr_inputs = torch.tensor(tr_inputs).to(device).long()
+val_inputs = torch.tensor(val_inputs).to(device).long()
+tr_tags = torch.tensor(tr_tags).to(device).long()
+val_tags = torch.tensor(val_tags).to(device).long()
+tr_masks = torch.tensor(tr_masks).to(device).long()
+val_masks = torch.tensor(val_masks).to(device).long()
+
 
 # We shuffle the data at training time with the RandomSampler 
 # and at test time we just pass them sequentially with the SequentialSampler.
@@ -116,8 +118,8 @@ valid_data = TensorDataset(val_inputs, val_masks, val_tags)
 valid_sampler = SequentialSampler(valid_data)
 valid_dataloader = DataLoader(valid_data, sampler=valid_sampler, batch_size=bs)
 
-model = BertForTokenClassification.from_pretrained("bert-base-uncased", num_labels=len(tag2idx))
-
+model = BertForTokenClassification.from_pretrained("bert-base-uncased", num_labels=len(tag2idx),)
+model.cuda()
 
 # Before we can start the fine-tuning process, 
 # we have to setup the optimizer and add the parameters it should update. 
@@ -151,7 +153,7 @@ def flat_accuracy(preds, labels):
 
 
 # Fine-tuning the BERT model
-epochs = 1
+epochs = 2
 max_grad_norm = 1.0
 
 for _ in trange(epochs, desc="Epoch"):
@@ -160,9 +162,12 @@ for _ in trange(epochs, desc="Epoch"):
     tr_loss = 0
     nb_tr_examples, nb_tr_steps = 0, 0
     for step, batch in enumerate(train_dataloader):
+        print(device)
         # add batch to gpu
-        batch = tuple(t.to(device) for t in batch)
+        batch = tuple(t.cuda() for t in batch)
         b_input_ids, b_input_mask, b_labels = batch
+        print(type(b_input_ids))
+        print(b_input_ids)
         # forward pass
         loss = model(b_input_ids, token_type_ids=None,
                      attention_mask=b_input_mask, labels=b_labels)
@@ -185,7 +190,7 @@ for _ in trange(epochs, desc="Epoch"):
     nb_eval_steps, nb_eval_examples = 0, 0
     predictions , true_labels = [], []
     for batch in valid_dataloader:
-        batch = tuple(t.to(device) for t in batch)
+        batch = tuple(t.to(device).long() for t in batch)
         b_input_ids, b_input_mask, b_labels = batch
         
         with torch.no_grad():
@@ -213,36 +218,36 @@ for _ in trange(epochs, desc="Epoch"):
     print("F1-Score: {}".format(f1_score(pred_tags, valid_tags)))
 
 
-# Evaluate the model
-model.eval()
-predictions = []
-true_labels = []
-eval_loss, eval_accuracy = 0, 0
-nb_eval_steps, nb_eval_examples = 0, 0
-for batch in valid_dataloader:
-    batch = tuple(t.to(device) for t in batch)
-    b_input_ids, b_input_mask, b_labels = batch
+# # Evaluate the model
+# model.eval()
+# predictions = []
+# true_labels = []
+# eval_loss, eval_accuracy = 0, 0
+# nb_eval_steps, nb_eval_examples = 0, 0
+# for batch in valid_dataloader:
+#     batch = tuple(t.to(device) for t in batch)
+#     b_input_ids, b_input_mask, b_labels = batch
 
-    with torch.no_grad():
-        tmp_eval_loss = model(b_input_ids, token_type_ids=None,
-                              attention_mask=b_input_mask, labels=b_labels)
-        logits = model(b_input_ids, token_type_ids=None,
-                       attention_mask=b_input_mask)
+#     with torch.no_grad():
+#         tmp_eval_loss = model(b_input_ids, token_type_ids=None,
+#                               attention_mask=b_input_mask, labels=b_labels)
+#         logits = model(b_input_ids, token_type_ids=None,
+#                        attention_mask=b_input_mask)
         
-    logits = logits.detach().cpu().numpy()
-    predictions.extend([list(p) for p in np.argmax(logits, axis=2)])
-    label_ids = b_labels.to('cpu').numpy()
-    true_labels.append(label_ids)
-    tmp_eval_accuracy = flat_accuracy(logits, label_ids)
+#     logits = logits.detach().cpu().numpy()
+#     predictions.extend([list(p) for p in np.argmax(logits, axis=2)])
+#     label_ids = b_labels.to('cpu').numpy()
+#     true_labels.append(label_ids)
+#     tmp_eval_accuracy = flat_accuracy(logits, label_ids)
 
-    eval_loss += tmp_eval_loss.mean().item()
-    eval_accuracy += tmp_eval_accuracy
+#     eval_loss += tmp_eval_loss.mean().item()
+#     eval_accuracy += tmp_eval_accuracy
 
-    nb_eval_examples += b_input_ids.size(0)
-    nb_eval_steps += 1
+#     nb_eval_examples += b_input_ids.size(0)
+#     nb_eval_steps += 1
 
-pred_tags = [[tags_vals[p_i] for p_i in p] for p in predictions]
-valid_tags = [[tags_vals[l_ii] for l_ii in l_i] for l in true_labels for l_i in l ]
-print("Validation loss: {}".format(eval_loss/nb_eval_steps))
-print("Validation Accuracy: {}".format(eval_accuracy/nb_eval_steps))
-print("Validation F1-Score: {}".format(f1_score(pred_tags, valid_tags)))
+# pred_tags = [[tags_vals[p_i] for p_i in p] for p in predictions]
+# valid_tags = [[tags_vals[l_ii] for l_ii in l_i] for l in true_labels for l_i in l ]
+# print("Validation loss: {}".format(eval_loss/nb_eval_steps))
+# print("Validation Accuracy: {}".format(eval_accuracy/nb_eval_steps))
+# print("Validation F1-Score: {}".format(f1_score(pred_tags, valid_tags)))
